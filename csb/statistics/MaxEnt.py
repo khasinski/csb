@@ -1,3 +1,8 @@
+"""
+A Maximum-Entropy model for backbone torsion angles.
+Reference:
+Rowicka and  Otwinowski 2004
+"""
 
 def load_data(aa, ss='all', path='~/data/dunbrack', isd=True):
     """
@@ -8,14 +13,11 @@ def load_data(aa, ss='all', path='~/data/dunbrack', isd=True):
     @param path: search path for data files
     @paran isd map
     """
-    from numpy import array, compress, transpose, where, pi, fmod
-    import sys, os
+    from numpy import array, compress
     from csb.math import degree2radian
+    from csb.io import load
 
-    sys.path.insert(0, os.path.expanduser(path))
-    from pystartup import Load
-
-    data = array(Load(path + '/%s_%s' % (aa, ss)).tolist())
+    data = array(load(path + '/%s_%s' % (aa, ss)).tolist())
     data = compress(data[:, 0] != 360., data, 0)
     data = compress(data[:, 1] != 360., data, 0)
     if isd:
@@ -37,31 +39,11 @@ def map_to_isd(angles):
     return 2 * pi - array(degree2radian(angles))
 
 
-def radian2torsionDeg(radianAngle):
-    from numpy import pi
-    ang = radianAngle
-    if ang > 2. * pi or ang < 0.:
-        raise ValueError, 'radian angle must be 0<ang<2pi, value: %f' % ang
-    if ang > pi:
-        ang = -((2. * pi) - ang)
-    return ang * 180. / pi
-
-def torsionDeg2radian(torsionDegAngle):
-    from numpy import pi
-    ang = torsionDegAngle
-    if ang > 181. or ang < -181.:
-        raise ValueError, 'degree angle must be -180<ang<180, value: %f' % ang
-
-    if ang < 0:
-        ang = 360. + ang
-    return ang * pi / 180.
-
 
 def torsion_to_radian(phi, psi, radian=0):
     """
     Comverts a torsian angle to radian
     """
-
     from csb.math import degree2radian
     if radian == 1:
         phi = degree2radian(phi)
@@ -76,7 +58,6 @@ class MaxentModel:
     Fourier expansion of a biangular log-probability density
     """
     def __init__(self, n, beta=1.):
-
         from numpy import zeros
 
         self.n = int(n)
@@ -85,62 +66,19 @@ class MaxentModel:
         self.ss = zeros((self.n, self.n))
         self.cs = zeros((self.n, self.n))
         self.sc = zeros((self.n, self.n))
-
         self.beta = float(beta)
 
-    def show(self):
+
+    def load_old(self, aa, f_name):
         """
-        Displays the probability distribution of a model in 3D
-        
+        Loads set of expansion coefficents from isd
+
+        param aa: Amino acid type
+        param f_name: File containing ramachandran definition
         """
 
-        from numpy import arange, meshgrid, pi, array
-        from csb.math import exp
-        try:
-            import matplotlib.cm as cm
-            import matplotlib.pyplot as plt
-        except:
-            raise ImportError('Matplotlib not installed')
-
-        delta = 0.025
-        x = y = arange(0, 2 * pi, delta)
-        X, Y = meshgrid(x, y)
-        Z = array([self(xx, yy) for xx, yy in zip(X.ravel(), Y.ravel())])
-        Z = Z.reshape((len(x), len(x)))
-        im = plt.imshow(exp(-Z), interpolation='bilinear', cmap=cm.jet,
-                        origin='lower', extent=[0, 2 * pi, 0, 2 * pi])
-        plt.show()
-        return
-
-    def show3D(self):
-        from numpy import arange, meshgrid, pi, array
-        try:
-            import matplotlib.cm as cm
-            import matplotlib.pyplot as plt
-            from mpl_toolkits.mplot3d import Axes3D
-        except:
-            raise ImportError('Matplotlib not installed')
-
-        delta = 0.025
-        x = y = arange(0, 2 * pi, delta)
-        X, Y = meshgrid(x, y)
-        z = array([self(xx, yy) for xx, yy in zip(X.ravel(), Y.ravel())])
-        z = z.reshape((len(x), len(x)))
-        fig = plt.figure()
-        ax = Axes3D(fig)
-        ax.contourf(X, Y, clip(-z, -6.26, 20), 100, extend3d=True)
-        fig.show()
-        return
-
-
-    def load_old(self,
-                 aa, path='~/mnt/tay/mechelke/projects/isd/toppar/maxent_potentials'):
         import os
-        from numpy import arange, zeros
-        from csb.io import Load
-
-
-        params, energies = eval(open(os.path.expanduser(path)).read())
+        params, _energies = eval(open(os.path.expanduser(f_name)).read())
         params = params[self.n - 1]
 
         for k, l, x, f, g in params[aa]:
@@ -154,14 +92,19 @@ class MaxentModel:
             elif f == 'sin' and g == 'sin':
                 self.ss[k, l] = -x
 
-    def load(self, aa,
-             path='~/mnt/tay/mechelke/projects/isd/toppar/maxent_potentials_v3'):
-        import os
-        from numpy import arange, zeros, reshape, array
-        from csb.io import Load
+    def load(self, aa, f_name):
+        """
+        Loads set of expansion coefficents from isd+
 
-        path = os.path.expanduser(path)
-        params, energies = Load(path)
+        @param aa: Amino acid type
+        @param f_name: File containing ramachandran definition
+        """
+        import os
+        from numpy import reshape, array
+        from csb.io import load
+
+        f_name = os.path.expanduser(f_name)
+        params, _energies = load(f_name)
         params = params[self.n]
 
         a, b, c, d = params[aa]
@@ -173,44 +116,60 @@ class MaxentModel:
         self.cc, self.cs, self.sc, self.ss = -a, -c, -b, -d
 
 
-
-
     def periodicities(self):
-
         from numpy import arange
 
         return arange(self.n)
 
     def __call__(self, x, y):
+        """
+        returns the energy at positions (x,y) 
 
-        from numpy import sin, cos, concatenate, dot
+        @param x: x-coordinates for evaluation
+        @type x: array-like
 
-        k = self.periodicities()
-        cx, sx = cos(k * x), sin(k * x)
-        cy, sy = cos(k * y), sin(k * y)
-        return dot(cx, dot(self.cc, cy)) + dot(sx, dot(self.ss, sy)) + \
-               dot(sx, dot(self.sc, cy)) + dot(cx, dot(self.cs, sy))
+        @param y: y-coordinates for evaluation
+        @type y: array-like
+        """
+        return self.energy(x,y)
+        
 
-    def set(self, params):
+    def set(self, coef):
+        """
+        Sets the fourier expansion coefficents and calculations the 
+        new partation function
 
+        @param coef: expansion coefficents
+        @type coef: array like, with shape (4,n,n)
+        """
         from numpy import reshape
 
         self.cc[:, :], self.ss[:, :], self.cs[:, :], self.sc[:, :] = \
-                      reshape(params, (4, self.n, self.n))
+                      reshape(coef, (4, self.n, self.n))
         self.normalize()
 
     def get(self):
-
+        """
+        returns current expansion coefficents
+        """
         from numpy import array
 
         return array([self.cc, self.ss, self.cs, self.sc])
 
+    
     def energy(self, x, y=None):
+        """
+        returns the energy at positions (x,y) 
 
-        from numpy import sin, cos, concatenate, dot, multiply
+        @param x: x-coordinates for evaluation
+        @type x: array-like
+
+        @param y: y-coordinates for evaluation
+        @type y: array-like
+        """
+        from numpy import sin, cos, dot, multiply
 
         k = self.periodicities()
-
         cx, sx = cos(multiply.outer(k, x)), sin(multiply.outer(k, x))
         if y is not None:
             cy, sy = cos(multiply.outer(k, y)), sin(multiply.outer(k, y))
@@ -223,97 +182,100 @@ class MaxentModel:
                dot(dot(sx.T, self.ss), sy)
 
     def sample_weights(self):
-
-        from numpy import add, sqrt, concatenate
+        """
+        creates a random set of expansion coefficents
+        """
+        from numpy import add, sqrt
         from numpy.random import standard_normal
 
         k = self.periodicities()
         k = add.outer(k ** 2, k ** 2)
-
         self.set([standard_normal(k.shape) / sqrt(k) for i in range(4)])
         self.normalize(True)
 
     def prob(self, x, y):
+        """
+        Returns the probability of the configurations x cross y
+        """
         from csb.math import exp
         return exp(-self.beta * self(x, y))
 
-    def Z(self):
 
+    def z(self):
+        """
+        Calculate the partion function 
+        """
         from scipy.integrate import dblquad
         from numpy import pi
 
         return dblquad(self.prob, 0., 2 * pi, lambda x: 0., lambda x: 2 * pi)
 
-    def logZ2(self, n=500):
 
-        from numpy import pi, linspace, sum, array
-        from csb.math import log_sum_exp, log, exp
-
-        x = linspace(0., 2 * pi, n)
-        dx = x[1] - x[0]
-        E = self.energy(x).flatten()
-        return log_sum_exp(-self.beta * E) + 2 * log(dx)
-
-    def logZ3(self, n=500):
+    def log_z(self, n=500, integration = 'simpson'):
         """
-        using trapezoidal rule
+        Calculate the log partion function 
         """
-        from numpy import pi, linspace, sum, array
-        from csb.numeric import trapezoidal2D
-        from csb.math import log_sum_exp, log, exp
+        from numpy import pi, linspace, max
+        from csb.math import log, exp
 
-        x = linspace(0., 2 * pi, n)
-        dx = x[1] - x[0]
+        if integration == 'simpson':
+            from csb.numeric import simpson_2d
+            x = linspace(0., 2 * pi, 2 * n + 1)
+            dx = x[1] - x[0]
 
-        f = -self.beta * self.energy(x)
-        f_max = f.max()
-        f -= f_max
+            f = -self.beta * self.energy(x)
+            f_max = max(f)
+            f -= f_max
 
-        I = trapezoidal2D(exp(f))
+            I = simpson_2d(exp(f))
+            return log(I) + f_max + 2 * log(dx)
 
-        return log(I) + f_max + 2 * log(dx)
+        elif integration == 'trapezoidal':
 
-    def logZ(self, n=500):
-        """
-        using Simpson rule
-        """
-        from numpy import pi, linspace, sum, array
-        from csb.numeric import simpson2D
-        from csb.math import log_sum_exp, log, exp
+            from csb.numeric import trapezoidal_2d
+            x = linspace(0., 2 * pi, n)
+            dx = x[1] - x[0]
 
-        x = linspace(0., 2 * pi, 2 * n + 1)
-        dx = x[1] - x[0]
-
-        f = -self.beta * self.energy(x)
-        f_max = f.max()
-        f -= f_max
-
-        I = simpson2D(exp(f))
-
-        return log(I) + f_max + 2 * log(dx)
+            f = -self.beta * self.energy(x)
+            f_max = max(f)
+            f -= f_max
+            I = trapezoidal_2d(exp(f))
+            return log(I) + f_max + 2 * log(dx)
+        else:
+            raise NotImplementedError(
+                'Choise from trapezoidal and simpson-rule Integration')
+        
 
     def entropy(self, n=500):
-        from csb.numeric import trapezoidal2D
-        from numpy import pi, linspace, sum, array
-        from csb.math import log_sum_exp, log, exp
+        """
+        Calculate the entropy of the model
+
+        @param n: number of integration points for numerical integration
+        @type n: integer
+        """
+        from csb.numeric import trapezoidal_2d
+        from numpy import pi, linspace, max
+        from csb.math import log, exp
 
         x = linspace(0., 2 * pi, n)
         dx = x[1] - x[0]
 
         f = -self.beta * self.energy(x)
-        f_max = f.max()
+        f_max = max(f)
 
-        logZ = log(trapezoidal2D(exp(f - f_max))) + f_max + 2 * log(dx)
-        E_av = trapezoidal2D(f * exp(f - f_max)) * exp(f_max + 2 * log(dx) - logZ)
+        log_z = log(trapezoidal_2d(exp(f - f_max))) + f_max + 2 * log(dx)
+        average_energy = trapezoidal_2d(f * exp(f - f_max))\
+                         * exp(f_max + 2 * log(dx) - log_z)
 
-        return - E_av + logZ
+        return - average_energy + log_z
 
     def calculate_statistics(self, data):
-
+        """
+        Calculate the sufficient statistics for the data
+        """
         from numpy import cos, sin, dot, multiply
 
         k = self.periodicities()
-
         cx = cos(multiply.outer(k, data[:, 0]))
         sx = sin(multiply.outer(k, data[:, 0]))
         cy = cos(multiply.outer(k, data[:, 1]))
@@ -322,7 +284,13 @@ class MaxentModel:
         return dot(cx, cy.T), dot(sx, sy.T), dot(cx, sy.T), dot(sx, cy.T)
 
     def normalize(self, normalize_full=False):
+        """
+        Remove parameter, which do not have any influence on the model
+        and compute the partition function 
 
+        @param normalize_full: compute partition function
+        @type normalize_full: boolean
+        """
         self.cc[0, 0] = 0.
         self.ss[:, 0] = 0.
         self.ss[0, :] = 0.
@@ -330,9 +298,13 @@ class MaxentModel:
         self.sc[0, :] = 0.
 
         if normalize_full:
-            self.cc[0, 0] = self.logZ()
+            self.cc[0, 0] = self.log_z()
 
 class Posterior:
+    """
+    Object to hold and calcuate the posterior (log)probability
+    given an exponential family model and correspondingdata
+    """
 
     def __init__(self, model, data):
 
@@ -342,97 +314,43 @@ class Posterior:
         self.data = array(data)
         self.stats = self.model.calculate_statistics(self.data)
 
-        self.L = []
+        self.likelihoods = []
 
-    def __call__(self, weights=None, n=500):
+    def __call__(self, weights=None, n=100):
+        """
+        Returns the log posterior
 
+        @param weights: optional expansion coeffients of the model,
+                         if none are specified those of the model are used
+        @param n: number of integration point for calculating the partition function
+        """
         from numpy import sum
 
-        if weights is not None: self.model.set(weights)
+        if weights is not None:
+            self.model.set(weights)
 
         a = sum(self.stats[0] * self.model.cc)
         b = sum(self.stats[1] * self.model.ss)
         c = sum(self.stats[2] * self.model.cs)
         d = sum(self.stats[3] * self.model.sc)
 
-        logZ = self.data.shape[0] * self.model.logZ(n=n)
+        log_z = self.data.shape[0] * self.model.log_z(n=n)
 
-        L = -self.model.beta * (a + b + c + d) - logZ
+        likelihood = -self.model.beta * (a + b + c + d) - log_z
 
-        self.L.append(L)
-
-        return L
-
-    def grad(self, weights=None):
-
-        from numpy import sum
-
-        if weights is not None: self.model.set(weights)
-
-class MetropolisSampler:
-
-    def __init__(self, posterior):
-
-        self.posterior = posterior
-        self.eps = 1e-1
-        self.E = None
-        self.accept = []
-        self.beta = 1.0
-
-    def propose(self, x):
-
-        from numpy.random import random
-
-        return x + 2 * (random(x.shape) - 0.5) * self.eps
-
-    def sample(self, x):
-
-        from numpy.random import random
-        from numpy import exp
-
-        if self.E is None:
-            E = -self.posterior(x)
-        else:
-            E = self.E * 1.
-
-        y = self.propose(x)
-        E2 = -self.posterior(y)
-
-        dE = E2 - E
-
-        accept = random() < exp(-self.beta * dE)
-        self.accept.append(1. * int(accept))
-
-        if accept:
-            self.E = E2
-            return y
-
-        else:
-            self.E = E
-            return x
-
-    def generate_samples(self, x, n_samples=100):
-
-        self.samples = []
-        self.accept = []
-        self.energies = []
-        self.E = -self.posterior(x)
-
-        for i in range(n_samples):
-
-            y = self.sample(x)
-            print i, self.accept[-1]
-            self.samples.append(y)
-            self.energies.append(self.E)
+        self.likelihoods.append(likelihood)
+        return likelihood
 
 
 if __name__ == '__main__':
-    from numpy import *
-    from csb.statistics import Posterior, MetropolisSampler, MaxentModel
-    from csb.statistics.MaxEnt import load_data
+    from csb.statistics.maxent import Posterior, MaxentModel
+    from csb.statistics.maxent import load_data
     from scipy.optimize import fmin_powell
+    from numpy import linspace, pi 
+
     aa, ss = 'ALA', 'H'
-    k = 5
+    k = 2
+
     data = load_data(aa, ss)
     n = len(data)
     # Setup model
@@ -441,9 +359,9 @@ if __name__ == '__main__':
     posterior = Posterior(model, data)
     x = model.get() * 1.
     x0 = posterior.model.get().flatten()
-    target = lambda w:-posterior(w)
+    target = lambda w: -posterior(w)
     # Learn parameters which minimze posterior
     x = fmin_powell(target, x0)
     posterior.model.set(x)
     posterior.model.normalize(True)
-    z = posterior.model.show()
+    z = posterior.model.energy(linspace(0,2 * pi))
